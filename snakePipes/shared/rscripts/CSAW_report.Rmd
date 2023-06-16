@@ -22,13 +22,14 @@ This report summarizes statistical analysis of binding events using group inform
 
 ```{r data_load}
 DBdata<-file.path(snakemake@params[["outdir"]], "DiffBinding_analysis.Rdata")
+useSpikeInForNorm<-snakemake@params[["useSpikeInForNorm"]]
 suppressMessages(require(GenomicRanges))
 suppressMessages(require(csaw))
 load(DBdata)
 ```
 
-Input to the differential binding analysis were `r length(chip_object$windowCounts)` genomic bins of size `r width(chip_object$windowCounts)[1]` bp having any overlap to the union of MACS2 peaks from all samples listed in the sample sheet.   
-Size factors were calculated via TMM normalization of read counts obtained for 10kb genomic bins and amounted to `r chip_object$normFactors`.   
+Input to the differential binding analysis were `r length(chip_object$windowCounts)` genomic bins of size `r width(chip_object$windowCounts)[1]` bp having any overlap to the union of `r unlist(strsplit(snakemake@output[["outfile"]],"_"))[2]` peaks from all samples listed in the sample sheet.   
+Size factors were calculated via `r ifelse(useSpikeInForNorm,"spikein normalization","TMM normalization of read counts obtained for 10kb genomic bins")` and amounted to `r chip_object$windowCounts$norm.factors`.   
 
 ### Statistical analysis
 
@@ -44,12 +45,18 @@ The absolute log fold change of the window with the smallest p value belonging t
 ### Filtering of results
 
 ```{r filter_results}
-merged <- chip_results$mergedRegions
-tabcom <- chip_results$combinedPvalues
-merged$region$score <- -10 * log10(tabcom$FDR)
-names(merged$region) <- paste0("region", 1:length(merged$region))
-tabcom$name <- names(merged$region)
-tabx <- as.data.frame(merged$region, stringsAsFactors=FALSE)
+merged.window <- chip_results$mergedRegions.window
+merged.peak <- chip_results$mergedRegions.peak
+merged = c(merged.window$regions, merged.peak$regions)
+
+tabcom.window <- chip_results$combinedPvalues.window
+tabcom.peak <- chip_results$combinedPvalues.peak
+tabcom = rbind(tabcom.window, tabcom.peak)
+
+merged$score <- -10 * log10(tabcom$FDR)
+names(merged) <- paste0("region", 1:length(merged))
+tabcom$name <- names(merged)
+tabx <- as.data.frame(merged, stringsAsFactors=FALSE)
 tabx$name <- rownames(tabx)
 full_res <- as.data.frame(merge(x=tabx, y=tabcom, by.x="name", by.y="name"), stringsAsFactors=FALSE)
 fdrcutoff <- as.numeric(snakemake@params[["fdr"]])
@@ -71,7 +78,7 @@ Deeptools matrices were computed for the filtered lists of merged regions showin
 Heatmaps obtained using log2 ratio of ChIP signal over input were as follows:
 
 ```{r plot_l2r,fig.show='hold',fig.align='center', out.width ='40%',out.height='30%',fig.cap="UP and DOWN regions using log2 ratio."}
-if(!snakemake@params[["pipeline"]] %in% "chip-seq"){
+if(sum(grepl("log2r.heatmap.png",snakemake@input[["csaw_in"]]))<1){
     message("ChIP signal enrichment over input is only available for ChIP-seq workflow!")
 }else{
     knitr::include_graphics(c(file.path(snakemake@params[["outdir"]], "CSAW.UP.log2r.heatmap.png"),

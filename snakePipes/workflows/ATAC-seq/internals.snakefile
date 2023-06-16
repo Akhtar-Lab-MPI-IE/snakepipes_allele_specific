@@ -68,5 +68,9 @@ def filter_dict(sampleSheet):
 if sampleSheet:
     filtered_dict = filter_dict(sampleSheet)
     genrichDict = cf.sampleSheetGroups(sampleSheet)
+    reordered_dict = {k: filtered_dict[k] for k in [item for sublist in genrichDict.values() for item in sublist]}
+    if len([y for y in list(genrichDict.values())[0] if '.genome' in y]) != 0:
+        for k in genrichDict.keys():
+            genrichDict[k] = [ 'allele_specific/' + x  for x in genrichDict[k] ]
 else:
     genrichDict = {"all_samples": samples}

@@ -5,8 +5,8 @@ if bigWigType == "subtract" or bigWigType == "both":
         input:
             chip_bam = "filtered_bam/{chip_sample}.filtered.bam",
             chip_bai = "filtered_bam/{chip_sample}.filtered.bam.bai",
-            control_bam = "filtered_bam/{control_name}.filtered.bam",
-            control_bai = "filtered_bam/{control_name}.filtered.bam.bai"
+            control_bam = lambda wildcards: "filtered_bam/"+get_control(wildcards.chip_sample)+".filtered.bam",
+            control_bai = lambda wildcards: "filtered_bam/"+get_control(wildcards.chip_sample)+".filtered.bam.bai"
         output:
             "deepTools_ChIP/bamCompare/{chip_sample}.filtered.subtract.{control_name}.bw"
         params:
@@ -14,12 +14,13 @@ if bigWigType == "subtract" or bigWigType == "both":
             genome_size = genome_size,
             ignoreForNorm = "--ignoreForNormalization {}".format(ignoreForNormalization) if ignoreForNormalization else "",
             read_extension = "--extendReads" if pairedEnd else "--extendReads {}".format(fragmentLength),
-            blacklist = "--blackListFileName {}".format(blacklist_bed) if blacklist_bed else ""
+            blacklist = "--blackListFileName {}".format(blacklist_bed) if blacklist_bed else "",
+            scaleFactors = " --scaleFactorsMethod readCount "
         log:
-            out = "deepTools_ChIP/logs/bamCompare.subtract.{chip_sample}.filtered.subtract.{control_name}.out",
-            err = "deepTools_ChIP/logs/bamCompare.subtract.{chip_sample}.filtered.subtract.{control_name}.err"
+            out = "deepTools_ChIP/logs/{chip_sample}.filtered.subtract.{control_name}.out",
+            err = "deepTools_ChIP/logs/{chip_sample}.filtered.subtract.{control_name}.err" 
         benchmark:
-            "deepTools_ChIP/.benchmark/bamCompare.subtract.{chip_sample}.filtered.subtract.{control_name}.benchmark"
+            "deepTools_ChIP/.benchmark/{chip_sample}.filtered.subtract.{control_name}.benchmark"
         threads: 16
         conda: CONDA_SHARED_ENV
         shell: bamcompare_subtract_cmd
@@ -30,20 +31,21 @@ if bigWigType == "log2ratio" or bigWigType == "both":
         input:
             chip_bam = "filtered_bam/{chip_sample}.filtered.bam",
             chip_bai = "filtered_bam/{chip_sample}.filtered.bam.bai",
-            control_bam = "filtered_bam/{control_name}.filtered.bam",
-            control_bai = "filtered_bam/{control_name}.filtered.bam.bai",
+            control_bam = lambda wildcards: "filtered_bam/"+get_control(wildcards.chip_sample)+".filtered.bam",
+            control_bai = lambda wildcards: "filtered_bam/"+get_control(wildcards.chip_sample)+".filtered.bam.bai"
         output:
             "deepTools_ChIP/bamCompare/{chip_sample}.filtered.log2ratio.over_{control_name}.bw"
         params:
             bwBinSize = bwBinSize,
             ignoreForNorm = "--ignoreForNormalization {}".format(ignoreForNormalization) if ignoreForNormalization else "",
             read_extension = "--extendReads" if pairedEnd else "--extendReads {}".format(fragmentLength),
-            blacklist = "--blackListFileName {}".format(blacklist_bed) if blacklist_bed else ""
+            blacklist = "--blackListFileName {}".format(blacklist_bed) if blacklist_bed else "",
+            scaleFactors = " --scaleFactorsMethod readCount "
         log:
-            out = "deepTools_ChIP/logs/bamCompare.log2ratio.{chip_sample}.{control_name}.filtered.out",
-            err = "deepTools_ChIP/logs/bamCompare.log2ratio.{chip_sample}.{control_name}.filtered.err"
+            out = "deepTools_ChIP/logs/{chip_sample}.filtered.log2ratio.over_{control_name}.out",
+            err = "deepTools_ChIP/logs/{chip_sample}.filtered.log2ratio.over_{control_name}.err"
         benchmark:
-            "deepTools_ChIP/.benchmark/bamCompare.log2ratio.{chip_sample}.{control_name}.filtered.benchmark"
+            "deepTools_ChIP/.benchmark/{chip_sample}.filtered.log2ratio.over_{control_name}.benchmark"
         threads: 16
         conda: CONDA_SHARED_ENV
         shell: bamcompare_log2_cmd
@@ -82,7 +84,7 @@ rule plotFingerprint:
     output:
         metrics = "deepTools_ChIP/plotFingerprint/plotFingerprint.metrics.txt"
     params:
-        labels = " ".join(all_samples),
+        labels = " --labels " + " ".join(all_samples),
         blacklist = "--blackListFileName {}".format(blacklist_bed) if blacklist_bed else "",
         read_extension = "--extendReads" if pairedEnd else "--extendReads {}".format(fragmentLength),
         png = "--plotFile deepTools_ChIP/plotFingerprint/plotFingerprint.png" if (len(all_samples)<=20)

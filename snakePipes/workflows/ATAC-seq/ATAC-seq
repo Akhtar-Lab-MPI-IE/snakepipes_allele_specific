@@ -14,14 +14,13 @@ import textwrap
 import snakePipes.common_functions as cf
 import snakePipes.parserCommon as parserCommon
 
-
 def parse_args(defaults={"verbose": False, "configFile": None,
                          "clusterConfigFile": None, "maxJobs": 5,
                          "snakemakeOptions": "--use-conda", "tempDir": None,
                          "reads": ["_R1", "_R2"],
                          "maxFragmentSize": 150, "minFragmentSize": 0,
                          "fromBAM": False ,"qval": 0.001 ,"sampleSheet": None,
-                         "bamExt": "filtered.bam", "fdr": 0.05,
+                         "bamExt": "filtered.bam", "fdr": 0.05, "CSAWCountsMethod": "Both", 
                          "absBestLFC": 1, "UMIDedup": False,
                          "UMIDedupOpts": "", "UMIDedupSep": "_",
                          "peakCaller": "MACS2",
@@ -39,6 +38,8 @@ def parse_args(defaults={"verbose": False, "configFile": None,
         parents=[mainArgs],
         add_help=False
     )
+
+
 
     # Workflow options
     optional = parser.add_argument_group('Options')
@@ -67,7 +68,7 @@ def parse_args(defaults={"verbose": False, "configFile": None,
 
     optional.add_argument("--sampleSheet",
                           dest="sampleSheet",
-                          help="Invoke differential accessibility analysis by providing information on samples; see 'docs/content/sampleSheet.example.tsv' for example. IMPORTANT: The first entry defines which group of samples are control. With this, the order of comparison and likewise the sign of values can be changed! Also, the condition `control` should not be used (reserved to mark input samples in the ChIP-Seq workflow (default: '%(default)s').",
+                          help="Invoke differential accessibility analysis by providing information on samples; see 'https://github.com/maxplanck-ie/snakepipes/tree/master/docs/content/sampleSheet.example.tsv' for example. IMPORTANT: The first entry defines which group of samples are control. With this, the order of comparison and likewise the sign of values can be changed! Also, the condition `control` should not be used (reserved to mark input samples in the ChIP-Seq workflow (default: '%(default)s').",
                           default=defaults["sampleSheet"])
 
     optional.add_argument("--fromBAM",
@@ -91,6 +92,12 @@ def parse_args(defaults={"verbose": False, "configFile": None,
                           help="Log fold change threshold to apply for filtering DB regions"
                                "(default: '%(default)s')",
                           default=defaults["absBestLFC"])
+
+    optional.add_argument("--CSAWCountsMethod",
+                          dest="CSAWCountsMethod",
+                          help="Use Peaks or Windows to calculate DB regions",
+                          choices=["Both", "Peak", "Window"],
+                          default=defaults['CSAWCountsMethod'])
 
     return parser
 

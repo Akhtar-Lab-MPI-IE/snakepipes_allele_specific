@@ -33,7 +33,13 @@ elif mode == "STARsolo":
     fastq_indir_trim = None
     fastq_dir = "originalFASTQ"
     aligner = "STARsolo"
-
+elif mode == "allelic-mapping":
+    fastq_indir_trim = None
+    fastq_dir = "originalFASTQ"
+    aligner = "STARsolo"
+elif mode == "Alevin":
+    fastq_dir = "originalFASTQ"
+    aligner = "salmon"
 ### Initialization #############################################################
 
 infiles = sorted(glob.glob(os.path.join(indir, '*'+ext)))
@@ -49,7 +55,12 @@ if not cf.is_paired(infiles,ext,reads):
     print("This workflow requires paired-end read data!")
     exit(1)
 
-if mode == "STARsolo":
+## print deprecation message for modeGruen
+if mode=="Gruen":
+    print("Warning: mode Gruen is going to be deprecated by the end of 2020!")
+
+
+if mode == "STARsolo" or mode == "allelic-mapping":
     if myKit == "10Xv2":
         BCwhiteList = os.path.join(maindir,"workflows","scRNAseq","10x_737K-august-2016.txt")
         STARsoloCoords = ["17","10","1","16"]

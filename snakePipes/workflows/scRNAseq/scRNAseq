@@ -21,24 +21,26 @@ def parse_args(defaults={"verbose": False, "configFile": None,
                          "snakemakeOptions": "--use-conda", "tempdir": None,
                          "downsample": False, "trim": False,
                          "reads": ["_R1", "_R2"], "ext": ".fastq.gz", "ext": ".fastq.gz",
-                         "trimmerOptions": "-a A{'30'}", "cellNames": None,
+                         "trimmerOptions": "-a A{'30'}", "cellNames": None, "libraryType": 1, 
                          "alignerOptions": "--outBAMsortingBinsN 30 --twopassMode Basic",
                          "filterGTF": "-v -P 'decay|pseudogene' ",
                          "cellBarcodeFile": None, "splitLib": False,
                          "cellBarcodePattern": "NNNNNNXXXXXX", "bwBinSize": 10,
                          "plotFormat": "png", "skipRaceID": False,
                          "cellFilterMetric": "gene_universe",
-			 "mode": "STARsolo", "BCwhiteList": None, "STARsoloCoords": ["1","7","8","7"], "myKit": "CellSeq384", "skipVelocyto": False}):
+			 "mode": "STARsolo", "BCwhiteList": None, "STARsoloCoords": ["1","7","8","7"], "myKit": "CellSeq384", "skipVelocyto": False,
+                         "alevinLibraryType":"ISR", "prepProtocol":"celseq2", "salmonIndexOptions": "--type puff -k 31", "expectCells" : None}):
     """
     Parse arguments from the command line.
     """
     mainArgs = parserCommon.mainArguments(defaults, workingDir=False)
+    snpArgs = parserCommon.snpArguments(defaults)
 
     parser = argparse.ArgumentParser(
         prog=sys.argv[0],
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=textwrap.dedent(__description__),
-        parents=[mainArgs],
+        parents=[mainArgs, snpArgs],
         add_help=False
     )
 
@@ -48,10 +50,15 @@ def parse_args(defaults={"verbose": False, "configFile": None,
     optional.add_argument("--mode",
                           dest="mode",
                           metavar="STR",
-                          help="Analysis mode. Default: %(default)s and possible settings 'Gruen' and 'STARsolo'.",
-			  choices=['Gruen', 'STARsolo'],
+                          help="Analysis mode. Possible settings are 'Gruen, STARsolo, allelic-mapping and Alevin' Default: %(default)s",
+			              choices=['Gruen', 'STARsolo','Alevin', 'allelic-mapping'],
                           type=str,
                           default=defaults["mode"])
+
+    optional.add_argument("--libraryType",
+                          help="user provided library type strand specificity. featureCounts style: 0, 1, 2 (Illumina TruSeq); default: '%(default)s')",
+                          type=int,
+                          default=defaults["libraryType"])
 
     optional.add_argument("--downsample",
                           dest="downsample",
@@ -113,7 +120,7 @@ def parse_args(defaults={"verbose": False, "configFile": None,
 
     optional.add_argument("--BCwhiteList",
                           metavar="STR",
-                          help="Path to a one-column txt file with barcode whitelist. Required for the STARsolo mode (default: '%(default)s')",
+                          help="Path to a one-column txt file with barcode whitelist. Required for the STARsolo mode,optional for Alevin mode. (default: '%(default)s')",
                           default=defaults["BCwhiteList"])
 
     optional.add_argument("--STARsoloCoords",
@@ -161,6 +168,28 @@ def parse_args(defaults={"verbose": False, "configFile": None,
                           default=defaults["skipVelocyto"],
                           help="Skip bam filtering and generating RNA velocity counts by velocyto to save time and memory usage. (default: '%(default)s')")
 
+    optional.add_argument("--prepProtocol",
+                          dest="prepProtocol",
+                          choices=["dropseq","chromiumV3", "chromium", "gemcode","citeseq","celseq","celseq2","quartzseq2"],
+                          default=defaults["prepProtocol"],
+                          help="Alevin mode. Specify the library prep method. (default: '%(default)s')")
+
+    optional.add_argument("--salmonIndexOptions",
+                          dest="salmonIndexOptions",
+                          default=defaults["salmonIndexOptions"],
+                          help="Alevin mode. Salmon index options e.g. '--type puff' (default: '%(default)s')")
+
+    optional.add_argument("--alevinLibraryType",
+                          dest="alevinLibraryType",
+                          choices=["ISR", "ISF", "MSF", "MSR", "OSR", "OSF"],
+                          default=defaults["alevinLibraryType"],
+                          help="Alevin mode. Library orientation type. (default: '%(default)s')")
+
+    optional.add_argument("--expectCells",
+                          type=int,
+                          dest="expectCells",
+                          default=defaults["expectCells"],
+                          help="Alevin mode. Optional to fill in if you know how many cells are expected. (default: '%(default)s')")
 
     return parser
 
@@ -178,6 +207,17 @@ def main():
 
     # Common arguments
     cf.checkCommonArguments(args, baseDir, outDir=True)
+    
+    ## Begin workflow-specific checks
+    # check for Allele-specific mapping mode
+    args.allele_mode = cf.checkAlleleParams(args)
+    # convert file path to abspath
+    if args.allele_mode == "create_and_map":
+        args.VCFfile = os.path.abspath(args.VCFfile)
+    elif args.allele_mode == "map_only":
+        args.SNPfile = os.path.abspath(args.SNPfile)
+        args.NMaskedIndex = os.path.abspath(args.NMaskedIndex)
+    
     # 4. barcode file
     if args.cellBarcodeFile == None:
         args.cellBarcodeFile = os.path.join(workflowDir, "celseq_barcodes.192.txt")

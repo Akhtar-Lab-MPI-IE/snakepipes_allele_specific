@@ -4,7 +4,6 @@ import subprocess
 # for paired-end BAM files, sambamba markdupes is fragment-based and
 # therefore superior to MACS2 mate 1-based duplicate detection
 
-
 ### MACS2 peak calling #########################################################
 
 if pairedEnd:
@@ -33,10 +32,10 @@ if pairedEnd:
             qval_cutoff=qval,
             mfold=mfold
         log:
-            out = "MACS2/logs/MACS2.{chip_sample}.filtered.out",
-            err = "MACS2/logs/MACS2.{chip_sample}.filtered.err"
+            out = "MACS2/logs/{chip_sample}.MACS2.filtered.out",
+            err = "MACS2/logs/{chip_sample}.MACS2.filtered.err"
         benchmark:
-            "MACS2/.benchmark/MACS2.{chip_sample}.filtered.benchmark"
+            "MACS2/.benchmark/{chip_sample}.MACS2.filtered.benchmark"
         conda: CONDA_CHIPSEQ_ENV
         shell: """
             macs2 callpeak -t {input.chip} {params.control_param} \
@@ -47,7 +46,7 @@ if pairedEnd:
                 --name {wildcards.chip_sample}.filtered.BAM \
                 --nomodel \
                 --mfold {params.mfold}\
-                --extsize $(cat {input.insert_size_metrics} | grep filtered_bam/{wildcards.chip_sample}.filtered.bam | awk '{{printf("%i",$6)}}') \
+                --extsize $(grep -f <(echo filtered_bam/{wildcards.chip_sample} |sed 's/.genome.*//g' |sed 's/allele_specific\///g') {input.insert_size_metrics} | awk '{{printf("%i",$6)}}') \
                 {params.broad_calling} > {log.out} 2> {log.err}
 
             # also run MACS2 in paired-end mode BAMPE for comparison with single-end mode
@@ -78,10 +77,10 @@ else:
             mfold=mfold,
             qval_cutoff=qval
         log:
-            out = "MACS2/logs/MACS2.{chip_sample}.filtered.out",
-            err = "MACS2/logs/MACS2.{chip_sample}.filtered.err"
+            out = "MACS2/logs/{chip_sample}.MACS2.filtered.out",
+            err = "MACS2/logs/{chip_sample}.MACS2.filtered.err"
         benchmark:
-            "MACS2/.benchmark/MACS2.{chip_sample}.filtered.benchmark"
+            "MACS2/.benchmark/{chip_sample}.MACS2.filtered.benchmark"
         conda: CONDA_CHIPSEQ_ENV
         shell: """
             macs2 callpeak -t {input.chip} {params.control_param} -f BAM -g {params.genome_size} --qvalue {params.qval_cutoff} --keep-dup all --outdir MACS2 \
@@ -105,8 +104,8 @@ rule MACS2_peak_qc:
                               else "MACS2/{}.filtered.BAM_peaks.narrowPeak".format(wildcards.sample),
         genome_index = genome_index
     benchmark:
-        "MACS2/.benchmark/MACS2_peak_qc.{sample}.filtered.benchmark"
-    conda: CONDA_CHIPSEQ_ENV
+        "MACS2/.benchmark/{sample}.MACS2_peak_qc.filtered.benchmark"
+    conda: CONDA_SHARED_ENV
     shell: """
         # get the number of peaks
         peak_count=`wc -l < {params.peaks}`
@@ -133,40 +132,58 @@ rule MACS2_peak_qc:
 # TODO
 # add joined deepTools plotEnrichment call for all peaks and samples in one plot
 
+rule namesort_bams:
+    input:
+        bam = "filtered_bam/{sample}.filtered.bam"
+    output:
+        bam = temp("filtered_bam/{sample}.namesorted.bam")
+    log:
+        "filtered_bam/logs/{sample}.namesort.err"
+    params:
+        tempDir = tempDir
+    threads: 4
+    conda: CONDA_SAMBAMBA_ENV
+    shell: """
+        TMPDIR={params.tempDir}
+        MYTEMP=$(mktemp -d ${{TMPDIR:-/tmp}}/snakepipes.XXXXXXXXXX)
+        sambamba sort -t {threads} -o {output.bam} --tmpdir=$MYTEMP -n {input.bam} 2> {log}
+        rm -rf $MYTEMP
+         """
+
 # Requires PE data
 # Should be run once per-group!
 if pairedEnd:
     rule Genrich_peaks:
         input:
-            bams=lambda wildcards: expand(os.path.join("filtered_bam", "{sample}.filtered.bam"), sample=genrichDict[wildcards.group]),
-            control = lambda wildcards: ["filtered_bam/"+get_control(x)+".filtered.bam" for x in genrichDict[wildcards.group]]
+            bams=lambda wildcards: expand(os.path.join("filtered_bam", "{sample}.namesorted.bam"), sample=genrichDict[wildcards.group]),
+            control = lambda wildcards: ["filtered_bam/"+get_control(x)+".namesorted.bam" for x in genrichDict[wildcards.group]]
         output:
             "Genrich/{group}.narrowPeak"
         log: "Genrich/logs/{group}.log"
         params:
-            bams = lambda wildcards: ",".join(expand(os.path.join("filtered_bam", "{sample}.filtered.bam"), sample=genrichDict[wildcards.group])),
+            bams = lambda wildcards: ",".join(expand(os.path.join("filtered_bam", "{sample}.namesorted.bam"), sample=genrichDict[wildcards.group])),
             blacklist = "-E {}".format(blacklist_bed) if blacklist_bed else "",
             control_pfx=lambda wildcards,input: "-c" if input.control else "",
             control=lambda wildcards,input: ",".join(input.control) if input.control else ""
-        conda: CONDA_ATAC_ENV
+        conda: CONDA_CHIPSEQ_ENV
         shell: """
-            Genrich -S -t {params.bams} {params.control_pfx} {params.control} -o {output} -r {params.blacklist} -y 2> {log}
+            Genrich -t {params.bams} {params.control_pfx} {params.control} -o {output} -r {params.blacklist} -y 2> {log}
             """
 else:
     rule Genrich_peaks:
         input:
-            bams=lambda wildcards: expand(os.path.join("filtered_bam", "{sample}.filtered.bam"), sample=genrichDict[wildcards.group]),
-            control = lambda wildcards: ["filtered_bam/"+get_control(x)+".filtered.bam" for x in genrichDict[wildcards.group]]
+            bams=lambda wildcards: expand(os.path.join("filtered_bam", "{sample}.namesorted.bam"), sample=genrichDict[wildcards.group]),
+            control = lambda wildcards: ["filtered_bam/"+get_control(x)+".namesorted.bam" for x in genrichDict[wildcards.group]]
         output:
             "Genrich/{group}.narrowPeak"
         log: "Genrich/logs/{group}.log"
         params:
-            bams = lambda wildcards: ",".join(expand(os.path.join("filtered_bam", "{sample}.filtered.bam"), sample=genrichDict[wildcards.group])),
+            bams = lambda wildcards: ",".join(expand(os.path.join("filtered_bam", "{sample}.namesorted.bam"), sample=genrichDict[wildcards.group])),
             blacklist = "-E {}".format(blacklist_bed) if blacklist_bed else "",
             control_pfx=lambda wildcards,input: "-c" if input.control else "",
             control=lambda wildcards,input: ",".join(input.control) if input.control else "",
             frag_size=fragmentLength
-        conda: CONDA_ATAC_ENV
+        conda: CONDA_CHIPSEQ_ENV
         shell: """
-            Genrich -S -t {params.bams} {params.control_pfx} {params.control} -o {output} -r {params.blacklist} -w {params.frag_size} 2> {log}
+            Genrich -t {params.bams} {params.control_pfx} {params.control} -o {output} -r {params.blacklist} -w {params.frag_size} 2> {log}
             """

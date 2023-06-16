@@ -1,53 +1,56 @@
 ### deepTools bamCompare log2ratio #######################################################
 
+if bigWigType == "subtract" or bigWigType == "both":
+    rule bamCompare_subtract_allelic:
+        input:
+            chip_bam = "filtered_bam/allele_specific/{chip_sample}.filtered.bam",
+            chip_bai = "filtered_bam/allele_specific/{chip_sample}.filtered.bam.bai",
+            control_bam = "filtered_bam/allele_specific/{control_name}.filtered.bam",
+            control_bai = "filtered_bam/allele_specific/{control_name}.filtered.bam.bai"
+        output:
+            "deepTools_ChIP/bamCompare/allele_specific/{chip_sample}.filtered.subtract.{control_name}.bw"
+        params:
+            bwBinSize = bwBinSize,
+            genome_size = genome_size,
+            ignoreForNorm = "--ignoreForNormalization {}".format(ignoreForNormalization) if ignoreForNormalization else "",
+            read_extension = "--extendReads" if pairedEnd else "--extendReads {}".format(fragmentLength),
+            blacklist = "--blackListFileName {}".format(blacklist_bed) if blacklist_bed else "",
+            scaleFactors = " --scaleFactorsMethod readCount "
+        log:
+            out = "deepTools_ChIP/logs/allele_specific/{chip_sample}.filtered.subtract.{control_name}.out",
+            err = "deepTools_ChIP/logs/allele_specific/{chip_sample}.filtered.subtract.{control_name}.err"
+        benchmark:
+            "deepTools_ChIP/.benchmark/allele_specific/{chip_sample}.filtered.subtract.{control_name}.benchmark"
+        threads: 16
+        conda: CONDA_SHARED_ENV
+        shell: bamcompare_subtract_cmd
 
-rule bamCompare_log2_genome1:
-    input:
-        chip_bam = "allelic_bams/{chip_sample}.genome1.sorted.bam",
-        chip_bai = "allelic_bams/{chip_sample}.genome1.sorted.bam.bai",
-        control_bam = lambda wildcards: "allelic_bams/"+get_control(wildcards.chip_sample)+".genome1.sorted.bam",
-        control_bai = lambda wildcards: "allelic_bams/"+get_control(wildcards.chip_sample)+".genome1.sorted.bam.bai"
-    output:
-        "deepTools_ChIP/bamCompare/allele_specific/{chip_sample}.genome1.log2ratio.over_{control_name}.bw"#, chip_sample = chip_samples, suffix = ['genome1', 'genome2'])
-    conda: CONDA_SHARED_ENV
-    params:
-        bwBinSize = bwBinSize,
-        ignoreForNorm = "--ignoreForNormalization " + ignoreForNormalization if ignoreForNormalization else "",
-        read_extension = "--extendReads" if pairedEnd
-                         else "--extendReads " + str(fragmentLength),
-        blacklist = "--blackListFileName " + blacklist_bed if blacklist_bed
-                    else "",
-    log:
-        out = "deepTools_ChIP/logs/bamCompare.log2ratio.{chip_sample}.{control_name}.genome1.out",
-        err = "deepTools_ChIP/logs/bamCompare.log2ratio.{chip_sample}.{control_name}.genome1.err"
-    benchmark:
-        "deepTools_ChIP/.benchmark/bamCompare.log2ratio.{chip_sample}.{control_name}.genome1.benchmark"
-    threads: 16
-    shell: bamcompare_log2_cmd
+### deepTools bamCompare log2ratio #######################################################
+if bigWigType == "log2ratio" or bigWigType == "both":
+    rule bamCompare_log2_allelic:
+        input:
+            chip_bam = "filtered_bam/allele_specific/{chip_sample}.filtered.bam",
+            chip_bai = "filtered_bam/allele_specific/{chip_sample}.filtered.bam.bai",
+            control_bam = "filtered_bam/allele_specific/{control_name}.filtered.bam",
+            control_bai = "filtered_bam/allele_specific/{control_name}.filtered.bam.bai",
+        output:
+            "deepTools_ChIP/bamCompare/allele_specific/{chip_sample}.filtered.log2ratio.over_{control_name}.bw"
+        params:
+            bwBinSize = bwBinSize,
+            ignoreForNorm = "--ignoreForNormalization {}".format(ignoreForNormalization) if ignoreForNormalization else "",
+            read_extension = "--extendReads" if pairedEnd else "--extendReads {}".format(fragmentLength),
+            blacklist = "--blackListFileName {}".format(blacklist_bed) if blacklist_bed else "",
+            scaleFactors = " --scaleFactorsMethod readCount "
+        log:
+            out = "deepTools_ChIP/logs/allele_specific/{chip_sample}.filtered.log2ratio.over_{control_name}.out",
+            err = "deepTools_ChIP/logs/allele_specific/{chip_sample}.filtered.log2ratio.over_{control_name}.err"
+        benchmark:
+            "deepTools_ChIP/.benchmark/allele_specific/{chip_sample}.filtered.log2ratio.over_{control_name}.benchmark"
+        threads: 16
+        conda: CONDA_SHARED_ENV
+        shell: bamcompare_log2_cmd
 
-rule bamCompare_log2_genome2:
-    input:
-        chip_bam = "allelic_bams/{chip_sample}.genome2.sorted.bam",
-        chip_bai = "allelic_bams/{chip_sample}.genome2.sorted.bam.bai",
-        control_bam = lambda wildcards: "allelic_bams/"+get_control(wildcards.chip_sample)+".genome2.sorted.bam",
-        control_bai = lambda wildcards: "allelic_bams/"+get_control(wildcards.chip_sample)+".genome2.sorted.bam.bai"
-    output:
-        "deepTools_ChIP/bamCompare/allele_specific/{chip_sample}.genome2.log2ratio.over_{control_name}.bw"
-    conda: CONDA_SHARED_ENV
-    params:
-        bwBinSize = bwBinSize,
-        ignoreForNorm = "--ignoreForNormalization " + ignoreForNormalization if ignoreForNormalization else "",
-        read_extension = "--extendReads" if pairedEnd
-                         else "--extendReads " + str(fragmentLength),
-        blacklist = "--blackListFileName " + blacklist_bed if blacklist_bed
-                    else "",
-    log:
-        out = "deepTools_ChIP/logs/bamCompare.log2ratio.{chip_sample}.{control_name}.genome2.out",
-        err = "deepTools_ChIP/logs/bamCompare.log2ratio.{chip_sample}.{control_name}.genome2.err"
-    benchmark:
-        "deepTools_ChIP/.benchmark/bamCompare.log2ratio.{chip_sample}.{control_name}.genome2.benchmark"
-    threads: 16
-    shell: bamcompare_log2_cmd
+
 
 ### deepTools plotEnrichment ###################################################
 

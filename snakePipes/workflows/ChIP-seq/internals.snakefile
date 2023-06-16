@@ -4,7 +4,7 @@ import subprocess
 import re
 import yaml
 import sys
-
+import copy
 
 ### Functions ##################################################################
 
@@ -78,6 +78,17 @@ with open(samples_config, "r") as f:
         exit(1)
     del chip_dict_tmp
 
+chip_dict_ori = copy.deepcopy(chip_dict)
+
+##If it is for the allele specific, we need to add allele_specific/ before sample name 
+if any('.genome' in y for y in list(chip_dict.keys())) != 0:
+    for k in chip_dict.keys():
+        chip_dict[k]['control'] = 'allele_specific/' + chip_dict[k]['control']
+    for k in chip_dict.fromkeys(chip_dict):
+        new_key = 'allele_specific/' + k
+        chip_dict[new_key] = chip_dict.pop(k)
+
+
 cf.write_configfile(os.path.join("chip_samples.yaml"), chip_dict)
 
 # create unique sets of control samples, ChIP samples with and without control
@@ -107,7 +118,7 @@ chip_samples_wo_ctrl = list(sorted(chip_samples_wo_ctrl))
 chip_samples = sorted(chip_samples_w_ctrl + chip_samples_wo_ctrl)
 all_samples = sorted(control_samples + chip_samples)
 
-if not fromBAM:
+if not fromBAM and not useSpikeInForNorm:
     if pairedEnd:
         if not os.path.isfile(os.path.join(workingdir, "deepTools_qc/bamPEFragmentSize/fragmentSize.metric.tsv")):
             sys.exit('ERROR: {} is required but not present\n'.format(os.path.join(workingdir, "deepTools_qc/bamPEFragmentSize/fragmentSize.metric.tsv")))
@@ -120,11 +131,11 @@ if not fromBAM:
             ]
 
         # check for all samples whether all required files exist
-        for file in req_files:
-            if not os.path.isfile(file):
-                print('ERROR: Required file "{}" for sample "{}" specified in '
-                      'configuration file is NOT available.'.format(file, sample))
-                exit(1)
+        #for file in req_files:
+        #    if not os.path.isfile(file):
+        #        print('ERROR: Required file "{}" for sample "{}" specified in '
+        #              'configuration file is NOT available.'.format(file, sample))
+        #        exit(1)
 
         
 else:
@@ -168,7 +179,63 @@ def filter_dict(sampleSheet,input_dict):
     return(output_dict)
 
 if sampleSheet:
-    filtered_dict = filter_dict(sampleSheet,dict(zip(chip_samples_w_ctrl, [ get_control_name(x) for x in chip_samples_w_ctrl ])))
+    temp_dict = dict(zip([re.sub("allele_specific/", "", x) for x in chip_samples_w_ctrl], [re.sub("allele_specific/", "", x) for x in [ get_control_name(x) for x in chip_samples_w_ctrl ] ]))
+    filtered_dict = filter_dict(sampleSheet,temp_dict) #
+    if any('.genome' in y for y in list(filtered_dict.keys())):
+        for k in filtered_dict.keys():
+            filtered_dict[k] = 'allele_specific/' + filtered_dict[k]
+        for k in filtered_dict.fromkeys(filtered_dict):
+            new_key = 'allele_specific/' + k
+            filtered_dict[new_key] = filtered_dict.pop(k)
     genrichDict = cf.sampleSheetGroups(sampleSheet)
+    if len([y for y in list(genrichDict.values())[0] if '.genome' in y]) != 0:
+        for k in genrichDict.keys():
+            genrichDict[k] = [ 'allele_specific/' + x  for x in genrichDict[k] ]
+#    print(filtered_dict)
+#    print(genrichDict)
+    reordered_dict = {k: filtered_dict[k] for k in [item for sublist in genrichDict.values() for item in sublist]}
+    for k in reordered_dict.keys():
+        reordered_dict[k] = re.sub("allele_specific/", "", reordered_dict[k])
 else:
     genrichDict = {"all_samples": chip_samples}
+
+
+#################### functions and checks for using a spiked-in genome for normalization ########################################
+def check_if_spikein_genome(genome_index,spikeinExt):
+    resl=[]
+    if os.path.isfile(genome_index):
+        with open(genome_index) as ifile:
+            for line in ifile:
+                resl.append(re.search(spikeinExt, line))
+        if any(resl):
+            print("\n Spikein genome detected - at least one spikeIn chromosome found with extention " + spikeinExt + " .\n\n")
+            return True
+        else:
+            return False
+    else:
+        print("\n  Error! Genome index file "+ genome_index +" not found!!!\n\n")
+        exit(1)
+
+def get_host_and_spikein_chromosomes(genome_index,spikeinExt):
+    hostl=[]
+    spikeinl=[]
+    with open(genome_index) as ifile:
+        for line in ifile:
+            entry = line.split('\t')[0] 
+            if re.search(spikeinExt, entry):
+                spikeinl.append(entry)
+            else:
+                hostl.append(entry)
+    return([hostl,spikeinl])
+
+if useSpikeInForNorm:
+    part=['host','spikein']
+    spikein_detected=check_if_spikein_genome(genome_index,spikeinExt)
+    if spikein_detected:
+        host_chr=get_host_and_spikein_chromosomes(genome_index,spikeinExt)[0]
+        spikein_chr=get_host_and_spikein_chromosomes(genome_index,spikeinExt)[1]
+    else:
+        print("\n No spikein genome detected - no spikeIn chromosomes found with extention " + spikeinExt + " .\n\n")
+        exit(1)
+        
+       

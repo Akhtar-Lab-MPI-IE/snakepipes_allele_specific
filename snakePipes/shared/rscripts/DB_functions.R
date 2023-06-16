@@ -16,7 +16,7 @@
 
 .libPaths(R.home("library"))
 
-readfiles_chip <- function(sampleSheet, fragmentLength, window_size, alleleSpecific = FALSE, pe.param){
+readfiles_chip <- function(sampleSheet, fragmentLength, window_size, alleleSpecific = FALSE, pe.param, peak.files){
 
     # check that not >2 conditions are given
     if(length(unique(sampleSheet$condition)) > 2 ) {
@@ -61,28 +61,36 @@ readfiles_chip <- function(sampleSheet, fragmentLength, window_size, alleleSpeci
         rownames(designm)<-sampleSheet$name
         designType <- "condition"
         # define bam files to read
-        bam.files <- list.files("../filtered_bam",
-                                pattern = paste0(sampleSheet$name,".filtered.bam$", collapse = "|"),
-                                full.names = TRUE )
-        
+        if ( (length(grep("genome1", sampleSheet$name)) != 0 | length(grep("genome2", sampleSheet$name)) != 0) ){
+            bam.files <- Sys.glob(file.path(paste("..",bam_folder, "allele_specific",sep="/"),paste0(sampleSheet$name, bam_pfx,".bam") ))
+        } else {
+            bam.files <- Sys.glob(file.path(paste("..",bam_folder, sep="/"), paste0(sampleSheet$name, bam_pfx,".bam") ))
+        }
+
     }
 
     message("bam files used: ")
     message(bam.files)
     # readFiles using CSAW
     mincount <- 20
+    minCPM <- -3
     message(paste0("Counting reads in windows.. windows with total counts < ", mincount, " are discarded"))
     counts <- csaw::windowCounts(bam.files = bam.files, param = pe.param, ext = fragmentLength, spacing = window_size, filter = mincount)
-    if (designType==("condition")){
-        colnames(counts)<-gsub(".filtered.bam","",basename(bam.files))
-        counts<-counts[,sampleSheet$name]} else {
-        colnames(counts)<-gsub(".sorted.bam","",basename(bam.files))
-        counts<-counts[,paste0(rep(sampleSheet$name,each=2),".genome",c(1,2))]
-    }
-    print(head(counts))
+    message(paste0("Counting reads in peaks.. peaks with logCPM < ", minCPM, " are discarded"))
+    peak.counts <- csaw::regionCounts(bam.files = bam.files, regions = peak.files, param = pe.param)
+    peak.abundances <- edgeR::aveLogCPM(csaw::asDGEList(peak.counts))
+    peak.counts.filt <- peak.counts[peak.abundances > minCPM, ] # only use peaks logCPM > -3
+    # if (designType==("condition")){
+    #     colnames(counts)<-gsub(paste0(bam_pfx,".bam"),"",basename(bam.files))
+    #     counts<-counts[,sampleSheet$name]
+    # } else {
+    #     colnames(counts)<-gsub(".sorted.bam","",basename(bam.files))
+    #     counts<-counts[,paste0(rep(sampleSheet$name,each=2),".genome",c(1,2))]
+    # }
+    # print(head(counts))
 
     # output
-    chipCountObject <- list(windowCounts = counts, sampleSheet = sampleSheet,
+    chipCountObject <- list(windowCounts = counts, peakCounts = peak.counts.filt, sampleSheet = sampleSheet,
                             design = designm, designType = designType, pe.param = pe.param)
     return(chipCountObject)
 }
@@ -200,13 +208,29 @@ tmmNormalize_chip <- function(chipCountObject, binsize, plotfile){
 
 
     bam.files <- SummarizedExperiment::colData(chipCountObject$windowCounts)$bam.files
-    # Get norm factors
-    wider <- csaw::windowCounts(bam.files, bin = TRUE, width = binsize, param = chipCountObject$pe.param)
-    normfacs <- csaw::normFactors(wider, se.out=FALSE)
-    chipCountObject$normFactors <- normfacs
+    # Get norm factors for windowcounts
+    wider <- csaw::windowCounts(bam.files, bin = TRUE, width = binsize, param = chipCountObject$pe.param) ##for TMM normalization
+    
+    if(useSpikeInForNorm ){
+        tab<-read.table(scale_factors,sep="\t",header=TRUE,as.is=TRUE,quote="")
+        normfacs<-1/(tab$scalingFactor[match(colnames(chipCountObject$windowCounts),tab$sample)]) 
+        chipCountObject$windowCounts$norm.factors <- normfacs
+    } else {
+        ### (normMethod == "TMM")
+        normfacs.windows <- csaw::normFactors(chipCountObject$windowCounts, se.out=TRUE)
+        chipCountObject$windowCounts <- normfacs.windows
+        normfacs.peaks <- csaw::normFactors(chipCountObject$peakCounts, se.out=TRUE)
+        chipCountObject$peakCounts <- normfacs.peaks
+        ### (normMethod == "loess")
+        # normfacs.peaks.loess <- csaw::normOffsets(chipCountObject$peakCounts, se.out=TRUE)
+        # chipCountObject$peakCounts = normfacs.peaks.loess
+        # normfacs.windows.loess <- csaw::normOffsets(chipCountObject$windowCounts, se.out=TRUE)
+        # chipCountObject$windowCounts = normfacs.windows.loess
+    }
+
 
     # get norm counts
-    adj.counts <- edgeR::cpm(csaw::asDGEList(wider), log = TRUE)
+    adj.counts <- edgeR::cpm(csaw::asDGEList(chipCountObject$windowCounts), log = TRUE)
     chipCountObject$background_logcpm <- adj.counts
 
     # plot normalized counts
@@ -225,9 +249,12 @@ tmmNormalize_chip <- function(chipCountObject, binsize, plotfile){
     #}
     ## MDS plot to check for replicate variability
     for (top in c(100, 500, 1000, 5000)) {
-        limma::plotMDS(adj.counts, main = top,
-                   col = as.numeric(chipCountObject$sampleSheet$condition),
-                   labels = chipCountObject$sampleSheet$name, top = top)
+        limma::plotMDS(adj.counts, main = paste(top, "windows"),
+                       col = as.numeric(chipCountObject$sampleSheet$condition),
+                       labels = chipCountObject$sampleSheet$name, top = top)
+        limma::plotMDS(edgeR::cpm(csaw::asDGEList(chipCountObject$peakCounts), log = TRUE), main = paste(top, "peaks"),
+                       col = as.numeric(chipCountObject$sampleSheet$condition),
+                       labels = chipCountObject$sampleSheet$name, top = top)
     }
     dev.off()
 
@@ -250,44 +277,78 @@ tmmNormalize_chip <- function(chipCountObject, binsize, plotfile){
 getDBregions_chip <- function(chipCountObject, plotfile = NULL){
 
     # Make DGElist
-    y <- csaw::asDGEList(chipCountObject$windowCounts, norm.factors = chipCountObject$normFactors)
-    colnames(y)<-sampleInfo$name
-    design <- chipCountObject$design
-    # Estimate dispersions
-    y <- edgeR::estimateDisp(y, design)
-    o <- order(y$AveLogCPM)
-    fit <- edgeR::glmQLFit(y, design, robust=TRUE)
-
-    # and plot dispersions
-    if(!(is.null(plotfile))){
-        pdf(plotfile)
-        par(mfrow = c(1,2))
-        plot(y$AveLogCPM[o], sqrt(y$trended.dispersion[o]), type = "l", lwd = 2,
-             ylim = c(0, 1), xlab = expression("Ave."~Log[2]~"CPM"),
-             ylab = ("Biological coefficient of variation"))
-        edgeR::plotQLDisp(fit)
-        dev.off()
+    build.db = function(workingwidow, filename){
+        y <- csaw::asDGEList(workingwidow, norm.factors = workingwidow$norm.factors)
+        colnames(y)<-sampleInfo$name
+        design <- chipCountObject$design
+        
+        # Estimate dispersions
+        y <- edgeR::estimateDisp(y, design)
+        o <- order(y$AveLogCPM)
+        fit <- edgeR::glmQLFit(y, design, robust=TRUE)
+        
+        ### TEST for DB windows
+        # check design type
+        if(chipCountObject$designType != "condition") {
+            results <- edgeR::glmQLFTest(fit, coef = paste0("allelegenome2"))
+        } else {
+            results <- edgeR::glmQLFTest(fit, coef = paste0("condition",unique(chipCountObject$sampleSheet$condition)[2]))
+        }
+        
+        # Merge DB windows into regions: Using quick and dirty method
+        merged <- csaw::mergeWindows(SummarizedExperiment::rowRanges(workingwidow), tol = 100L)
+        # get combined test p-value for merged windows
+        tabcom <- csaw::combineTests(merged$id, results$table, pval.col = 4, fc.col = 1)
+        # get fold change of the best window within each combined cluster
+        tab.best <- csaw::getBestTest(merged$id, results$table,pval.col=4,cpm.col=1)
+        tabcom$best.logFC <- tab.best$logFC
+        tabcom$best.start <- GenomicRanges::start(SummarizedExperiment::rowRanges(workingwidow))[tab.best$best]
+        
+        # combine merged peaks window range with statistics
+        final.merged.peaks <- merged$region
+        final.merged.peaks@elementMetadata <- cbind(final.merged.peaks@elementMetadata, logCPM = y$AveLogCPM[tab.best$best], tab.best[,-1])
+        final.merged.peaks <- final.merged.peaks[order(final.merged.peaks@elementMetadata$FDR), ] # sort by FDR
+        final.merged.peaks # all windows
+        
+        # filter by FDR threshold
+        FDR.thresh <- 0.05 # set as desired
+        final.merged.peaks.sig <- final.merged.peaks[final.merged.peaks@elementMetadata$FDR < FDR.thresh, ]
+        final.merged.peaks.sig # significant differentially-accessible windows
+        
+        # Generate MA plot
+        final.merged.peaks$sig <- "n.s."
+        final.merged.peaks$sig[final.merged.peaks$FDR < FDR.thresh] <- "significant"
+        
+        p <- ggplot(data=data.frame(final.merged.peaks), aes(x = logCPM, y = logFC, col = factor(sig, levels=c("n.s.", "significant")))) + 
+            geom_point() + scale_color_manual(values = c("black", "red")) + 
+            # geom_smooth(inherit.aes=F, aes(x = logCPM, y = rep.logFC), method = "loess") + # smoothed loess fit; can add span=0.5 to reduce computation load/time
+            geom_hline(yintercept = 0) + labs(col = NULL) + theme_bw()
+        ggsave( plot = p, filename = paste0(plotfile, "_MAplot_", filename,".pdf") )
+        
+        # and plot dispersions
+        if(!(is.null(plotfile))){
+            pdf(paste0(plotfile,"_", filename,".pdf"))
+            par(mfrow = c(1,2))
+            plot(y$AveLogCPM[o], sqrt(y$trended.dispersion[o]), type = "l", lwd = 2,
+                 ylim = c(0, 1), xlab = expression("Ave."~Log[2]~"CPM"),
+                 ylab = ("Biological coefficient of variation"))
+            edgeR::plotQLDisp(fit)
+            dev.off()
+        }
+        chipResultObject.part <- list(fit = fit, results = results, mergedRegions = merged, combinedPvalues = tabcom)
+        return(chipResultObject.part)
     }
-
-    ### TEST for DB windows
-    # check design type
-    if(chipCountObject$designType != "condition") {
-        results <- edgeR::glmQLFTest(fit, coef = paste0("allelegenome2"))
-    } else {
-        results <- edgeR::glmQLFTest(fit, coef = paste0("condition",unique(chipCountObject$sampleSheet$condition)[2]))
-    }
-
-    # Merge DB windows into regions: Using quick and dirty method
-    merged <- csaw::mergeWindows(SummarizedExperiment::rowRanges(chipCountObject$windowCounts), tol = 100L)
-    # get combined test p-value for merged windows
-    tabcom <- csaw::combineTests(merged$id, results$table, pval.col = 4, fc.col = 1)
-    # get fold change of the best window within each combined cluster
-    tab.best <- csaw::getBestTest(merged$id, results$table,pval.col=4,cpm.col=1)
-    tabcom$best.logFC <- tab.best$logFC
-    tabcom$best.start <- GenomicRanges::start(SummarizedExperiment::rowRanges(chipCountObject$windowCounts))[tab.best$best]
-
+    
     # Return all results
-    chipResultObject <- list(fit = fit, results = results, mergedRegions = merged, combinedPvalues = tabcom)
+    chipResultObject.peak = build.db(chipCountObject$peakCounts, "peak")
+    
+    chipResultObject.window = build.db(chipCountObject$windowCounts, "window")
+    
+    chipResultObject <- list(fit.window = chipResultObject.window$fit, fit.peak = chipResultObject.peak$fit, 
+                             results.window = chipResultObject.window$results, results.peak = chipResultObject.peak$results,
+                             mergedRegions.window = chipResultObject.window$mergedRegions, mergedRegions.peak = chipResultObject.peak$mergedRegions,
+                             combinedPvalues.window = chipResultObject.window$combinedPvalues, combinedPvalues.peak = chipResultObject.peak$combinedPvalues)
+    names(chipResultObject)
     return(chipResultObject)
 }
 
@@ -304,21 +365,36 @@ getDBregions_chip <- function(chipCountObject, plotfile = NULL){
 #' writeOutput_chip(chipResultObject, outfile_prefix)
 #'
 
-writeOutput_chip <- function(chipResultObject, outfile_prefix, fdrcutoff,lfccutoff){
+writeOutput_chip <- function(chipResultObject, outfile_prefix, fdrcutoff,lfccutoff, method){
     # get merged regions
-    merged <- chipResultObject$mergedRegions
-    tabcom <- chipResultObject$combinedPvalues
-    merged$region$score <- -10*log10(tabcom$FDR)
-    names(merged$region) <- paste0("region", 1:length(merged$region))
-    tabcom$name <- names(merged$region)
+    merged.window <- chipResultObject$mergedRegions.window
+    merged.peak <- chipResultObject$mergedRegions.peak
+    
+    tabcom.window <- chipResultObject$combinedPvalues.window
+    tabcom.peak <- chipResultObject$combinedPvalues.peak
+    
+    if(method == "Window"){
+        merged = c(merged.window$regions)
+        tabcom = rbind(tabcom.window)
+    } else if(method == "Peak"){
+        merged = c(merged.peak$regions)
+        tabcom = rbind(tabcom.peak)
+    } else if(method == "Both"){
+        merged = c(merged.window$regions, merged.peak$regions)
+        tabcom = rbind(tabcom.window, tabcom.peak)
+    }
+    
+    merged$score <- -10*log10(tabcom$FDR)
+    names(merged) <- paste0("region", 1:length(merged))
+    tabcom$name <- names(merged)
     ## export merged data
-    rtracklayer::export.bed(merged$region, paste0(outfile_prefix, "_allregions.bed"))
+    rtracklayer::export.bed(merged, paste0(outfile_prefix, "_allregions.bed"))
     write.table(tabcom, file = paste0(outfile_prefix,"_scores.txt"),
             row.names = FALSE, quote = FALSE, sep = "\t")
 
     ## export FDR significant data
     is.sig <- tabcom$FDR <= fdrcutoff
-    test <- merged$region[is.sig]
+    test <- merged[is.sig]
 
     if(length(test) > 0){
         rtracklayer::export.bed(test, paste0(outfile_prefix,"_significant.bed"))
@@ -326,9 +402,9 @@ writeOutput_chip <- function(chipResultObject, outfile_prefix, fdrcutoff,lfccuto
         warning("output empty! please lower the fdr threshold.")
     }
     ##merge regions with stats
-    print(head(as.data.frame(merged$region)))
+    print(head(as.data.frame(merged)))
     print(head(tabcom))
-    tabx<-as.data.frame(merged$region,stringsAsFactors=FALSE)
+    tabx<-as.data.frame(merged,stringsAsFactors=FALSE)
     tabx$name<-rownames(tabx)
     full_res<-as.data.frame(merge(x=tabx,y=tabcom,by.x="name",by.y="name"),stringsAsFactors=FALSE) 
     full_res<-full_res[,c(2:ncol(full_res),1)]
@@ -365,10 +441,10 @@ writeOutput_chip <- function(chipResultObject, outfile_prefix, fdrcutoff,lfccuto
 filterByGlobal_chip <- function(chipCountObject){
     bin.size <- 2000L
     countdat <- chipCountObject$windowCounts
-    binned <- windowCounts(SummarizedExperiment::colData(countdat)$bam.files, bin = TRUE,
+    binned <- csaw::windowCounts(SummarizedExperiment::colData(countdat)$bam.files, bin = TRUE,
                      width = bin.size, param = chipCountObject$pe.param)
 
-    filter.stat <- filterWindows(countdat, background = binned, type = "global")
+    filter.stat <- csaw::filterWindows(countdat, background = binned, type = "global")
     keep <- filter.stat$filter > log2(3)
     print(sum(keep))
     chipCountObject$windowCounts <-  countdat[keep,]

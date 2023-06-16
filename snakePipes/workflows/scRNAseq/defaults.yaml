@@ -47,6 +47,11 @@ myKit: CellSeq384
 BCwhiteList:
 STARsoloCoords: ["1","7","8","7"]
 skipVelocyto: False
+##mode Alevin options
+alevinLibraryType: "ISR"
+prepProtocol: "celseq2"
+salmonIndexOptions: --type puff -k 31
+expectCells: 
 #generic options
 libraryType: 1
 bwBinSize: 10
@@ -63,6 +68,9 @@ bcPattern: NNNNCCCCCCCCC #default: 4 base umi barcode, 9 base cell barcode (eg. 
 UMIDedup: False
 UMIDedupSep: "_"
 UMIDedupOpts: --paired
+# for allele-spcific mapping
+SNPFile:
+NMaskedIndex:
 ################################################################################
 # Call snakemake directly, i.e. without using the wrapper script:
 #
